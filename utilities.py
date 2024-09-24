@@ -5,6 +5,7 @@ from redvid import Downloader
 import yt_dlp
 import re
 from datetime import datetime
+import markdown2
 
 try:
     from logindata import REDDIT_USERNAME, REDDIT_PASSWORD
@@ -34,37 +35,33 @@ def make_client():
     )
 
 
-def get_previous(location, html_file):
-    html_files = [f for f in os.listdir(location) if f.endswith(".html")]
-    pattern = html_file.replace(".html", r"\.(\d+)?\.html")
-    matches = [re.match(pattern, f) for f in html_files]
+def get_previous(location, md_file):
+    md_files = [f for f in os.listdir(location) if f.endswith(".md")]
+    pattern = md_file.replace(".md", r"\.(\d+)?\.md")
+    matches = [re.match(pattern, f) for f in md_files]
     matches = [m[0] for m in matches if m]
     matches.sort(key=lambda x: int(x.split(".")[1]))
     existing_ids = []
-    existing_posts_html = []
-    existing_comments_html = []
-    if html_file in html_files: matches.append(html_file)
+    existing_posts_md = []
+    existing_comments_md = []
+    if md_file in md_files: matches.append(md_file)
     for match in matches:
         with open(os.path.join(location, match), encoding="utf-8") as f:
-            current_html = f.read()
-            for id in re.findall(r'id="(.+?)"', current_html):
+            current_md = f.read()
+            for id in re.findall(r'\n\*\*ID:\*\* (.+?)\n', current_md):
                 if id not in existing_ids:
                     existing_ids.append(id)
             posts = re.findall(
-                r'(<div class="post"[\S\n\t\v ]+?<!--postend--><\/div>)',
-                current_html
+                r'(## Post[\S\n\t\v ]+?(?=\n## Post|\Z))',
+                current_md
             )
             comments = re.findall(
-                r'(<div class="comment"[\S\n\t\v ]+?<!--commentend--><\/div>)',
-                current_html
+                r'(### Comment[\S\n\t\v ]+?(?=\n### Comment|\Z))',
+                current_md
             )
-            for post in posts:
-                if post not in existing_posts_html:
-                    existing_posts_html.append(post)
-            for comment in comments:
-                if comment not in existing_comments_html:
-                    existing_comments_html.append(comment)
-    return existing_ids, existing_posts_html, existing_comments_html
+            existing_posts_md.extend(posts)
+            existing_comments_md.extend(comments)
+    return existing_ids, existing_posts_md, existing_comments_md
 
 
 def get_saved_posts(client):
@@ -110,26 +107,17 @@ def get_user_comments(client, username):
     ]
 
 
-def get_post_html(post):
-    """Takes a post object and creates a HTML for it - but not including the
-    preview HTML."""
-
-    with open(os.path.join("html", "post-div.html"), encoding="utf-8") as f:
-        html = f.read()
+def get_post_markdown(post):
     dt = datetime.utcfromtimestamp(post.created_utc)
-    html = html.replace("<!--title-->", post.title)
-    html = html.replace("<!--subreddit-->", f"/r/{str(post.subreddit)}")
-    html = html.replace("<!--user-->", f"/u/{post.author.name}" if post.author else "[deleted]")
-    html = html.replace("<!--link-->", f"posts/{post.id}.html")
-    html = html.replace("<!--reddit-link-->", f"https://reddit.com{post.permalink}")
-    html = html.replace("<!--content-link-->", post.url)
-    html = html.replace("<!--id-->", post.id)
-    html = html.replace("<!--body-->", (post.selftext_html or "").replace(
-        '<a href="/r/', '<a href="https://reddit.com/r/'
-    ))
-    html = html.replace("<!--timestamp-->", str(dt))
-    html = html.replace("<!--date-->", dt.strftime("%d %B, %Y"))
-    return html
+    md = f"## Post\n\n"
+    md += f"**Title:** {post.title}\n\n"
+    md += f"**Subreddit:** /r/{str(post.subreddit)}\n\n"
+    md += f"**Author:** {f'/u/{post.author.name}' if post.author else '[deleted]'}\n\n"
+    md += f"**Link:** [Reddit](https://reddit.com{post.permalink}) | [Content]({post.url})\n\n"
+    md += f"**ID:** {post.id}\n\n"
+    md += f"**Body:**\n\n{post.selftext}\n\n"
+    md += f"**Date:** {dt.strftime('%d %B, %Y')}\n\n"
+    return md
 
 
 def save_media(post, location):
@@ -221,102 +209,67 @@ def save_media(post, location):
                 return f
 
 
-def add_media_preview_to_html(post_html, media):
-    """Takes post HTML and returns a modified version with the preview
+def add_media_preview_to_markdown(post_md, media):
+    """Takes post markdown and returns a modified version with the preview
     inserted."""
 
     extension = media.split(".")[-1]
-    location = "/".join(["media", media])
+    location = f"media/{media}"
     if extension in IMAGE_EXTENSIONS:
-        return post_html.replace(
-            "<!--preview-->",
-            f'<img src="{location}">'
-        )
+        return post_md + f"![Preview]({location})\n\n"
     if extension in VIDEO_EXTENSIONS:
-        return post_html.replace(
-            "<!--preview-->",
-            f'<video controls><source src="{location}"></video>'
-        )
-    return post_html
+        return post_md + f"[Video]({location})\n\n"
+    return post_md
 
 
-def create_post_page_html(post, post_html):
-    """Creates the HTML for a post's own page."""
+def create_post_page_markdown(post, post_md):
+    """Creates the markdown for a post's own page."""
 
-    with open(os.path.join("html", "post.html"), encoding="utf-8") as f:
-        html = f.read()
-    html = html.replace("<!--title-->", post.title)
-    html = html.replace("<!--post-->", post_html.replace("h2>", "h1>").replace(
-        '<img src="media/', '<img src="../media/'
-    ).replace(
-        '<source src="media/', '<source src="../media/'
-    ))
-    html = re.sub(r'<a href="posts(.+?)</a>', "", html)
-    with open(os.path.join("html", "style.css"), encoding="utf-8") as f:
-        html = html.replace("<style></style>", f"<style>\n{f.read()}\n</style>")
-    with open(os.path.join("html", "main.js"), encoding="utf-8") as f:
-        html = html.replace("<script></script>", f"<script>\n{f.read()}\n</script>")
-    comments_html = []
+    md = f"# {post.title}\n\n"
+    md += post_md
+    md += "\n## Comments\n\n"
     post.comments.replace_more(limit=0)
     for comment in post.comments:
-        comments_html.append(get_comment_html(
-            comment, op=post.author.name if post.author else None
-        ))
-    html = html.replace("<!--comments-->", "\n".join(comments_html))
-    return html
+        md += get_comment_markdown(comment, op=post.author.name if post.author else None)
+    return md
 
 
-def get_comment_html(comment, children=True, op=None):
-    """Takes a post object and creates a HTML for it - it will get its children
+def get_comment_markdown(comment, children=True, op=None, level=0):
+    """Takes a post object and creates a markdown for it - it will get its children
     too unless you specify otherwise."""
 
-    with open(os.path.join("html", "comment-div.html"), encoding="utf-8") as f:
-        html = f.read()
     dt = datetime.utcfromtimestamp(comment.created_utc)
     author = "[deleted]"
     if comment.author:
         if comment.author == op:
-            author = f'<span class="op">/u/{comment.author.name}</span>'
+            author = f'**/u/{comment.author.name} (OP)**'
         else:
             author = f"/u/{comment.author.name}"
-    html = html.replace("<!--user-->", author)
-    html = html.replace("<!--body-->", (comment.body_html or "").replace(
-        '<a href="/r/', '<a href="https://reddit.com/r/'
-    ))
-    html = html.replace("<!--score-->", str(comment.score))
-    html = html.replace("<!--link-->", f"https://reddit.com{comment.permalink}")
-    html = html.replace("<!--timestamp-->", str(dt))
-    html = html.replace("<!--id-->", comment.id)
-    html = html.replace("<!--date-->", dt.strftime("%H:%M - %d %B, %Y"))
+    md = f"{'#' * (level + 3)} Comment\n\n"
+    md += f"**Author:** {author}\n\n"
+    md += f"**Body:**\n\n{comment.body}\n\n"
+    md += f"**Score:** {comment.score}\n\n"
+    md += f"**Link:** [Comment](https://reddit.com{comment.permalink})\n\n"
+    md += f"**ID:** {comment.id}\n\n"
+    md += f"**Date:** {dt.strftime('%H:%M - %d %B, %Y')}\n\n"
     if children:
-        children_html = []
         for child in comment.replies:
-            children_html.append(get_comment_html(child, children=False, op=op))
-        html = html.replace("<!--children-->", "\n".join(children_html))
-    return html
+            md += get_comment_markdown(child, children=False, op=op, level=level+1)
+    return md
 
 
-def save_html(posts, comments, location, html_file, page, has_next, username=None):
-    if username:
-        with open(os.path.join("html", "username.html"), encoding="utf-8") as f:
-            html = f.read().replace("[username]", username)
-    else:
-        with open(os.path.join("html", html_file), encoding="utf-8") as f:
-            html = f.read()
-    with open(os.path.join("html", "style.css"), encoding="utf-8") as f:
-        html = html.replace("<style></style>", f"<style>\n{f.read()}\n</style>")
-    with open(os.path.join("html", "main.js"), encoding="utf-8") as f:
-        html = html.replace("<script></script>", f"<script>\n{f.read()}\n</script>")
-    if page == 0 or page is None:
-        html = html.replace("Previous</a>", "</a>")
-    else:
-        html = html.replace(".p.html", f".{page-1}.html")
-    if not has_next or page is None:
-        html = html.replace("Next</a>", "</a>")
-    else:
-        html = html.replace(".n.html", f".{page+1}.html")
-    html = html.replace("<!--posts-->", "\n".join(posts))
-    html = html.replace("<!--comments-->", "\n".join(comments))
-    file_name = html_file if page is None else html_file.replace(".html", f".{page}.html")
+def save_markdown(posts, comments, location, md_file, page, has_next, username=None):
+    md = f"# {'Saved' if 'saved' in md_file else 'Upvoted' if 'upvoted' in md_file else username + '\'s'} Posts and Comments\n\n"
+    if page is not None:
+        if page > 0:
+            md += f"[Previous]({md_file.replace('.md', f'.{page-1}.md')}) | "
+        if has_next:
+            md += f"[Next]({md_file.replace('.md', f'.{page+1}.md')})"
+        md += "\n\n"
+    md += "## Posts\n\n"
+    md += "\n".join(posts)
+    md += "\n\n## Comments\n\n"
+    md += "\n".join(comments)
+    file_name = md_file if page is None else md_file.replace(".md", f".{page}.md")
     with open(os.path.join(location, file_name), "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(md)

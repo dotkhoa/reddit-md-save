@@ -52,47 +52,47 @@ if not os.path.exists(os.path.join(location, "posts")):
 
 # Get files to search through
 print("Getting previously saved posts and comments...")
-existing_ids, existing_posts_html, existing_comments_html = get_previous(location, html_file)
-print(len(existing_posts_html), "previous posts.")
-print(len(existing_comments_html), "previous comments.")
+existing_ids, existing_posts_md, existing_comments_md = get_previous(location, f"{html_file.replace('.html', '.md')}")
+print(len(existing_posts_md), "previous posts.")
+print(len(existing_comments_md), "previous comments.")
 
-# Get posts HTML
-posts_html = []
+# Get posts markdown
+posts_md = []
 posts = [p for p in get_posts(client) if p.id not in existing_ids]
 if not posts:
     print("No new posts")
 else:
     for post in tqdm(posts):
-        post_html = get_post_html(post)
+        post_md = get_post_markdown(post)
         media = save_media(post, location)
         if media:
-            post_html = add_media_preview_to_html(post_html, media)
-        posts_html.append(post_html)
-        page_html = create_post_page_html(post, post_html)
-        with open(os.path.join(location, "posts", f"{post.id}.html"), "w", encoding="utf-8") as f:
-            f.write(page_html)
-posts_html += existing_posts_html
+            post_md = add_media_preview_to_markdown(post_md, media)
+        posts_md.append(post_md)
+        page_md = create_post_page_markdown(post, post_md)
+        with open(os.path.join(location, "posts", f"{post.id}.md"), "w", encoding="utf-8") as f:
+            f.write(page_md)
+posts_md += existing_posts_md
 
-# Get comments HTML
-comments_html = []
+# Get comments markdown
+comments_md = []
 comments = [c for c in get_comments(client) if c.id not in existing_ids]
 if not comments:
     print("No new comments")
 else:
     for comment in tqdm(comments):
-        comment_html = get_comment_html(comment)
+        comment_md = get_comment_markdown(comment)
         media = save_media(post, location)
-        comments_html.append(comment_html)
-comments_html += existing_comments_html
+        comments_md.append(comment_md)
+comments_md += existing_comments_md
 
-# Save overall HTML
-print("Saving HTML...")
+# Save overall markdown
+print("Saving markdown...")
 if page_size:
-    length = max(len(posts_html), len(comments_html))
+    length = max(len(posts_md), len(comments_md))
     page_count = (length // page_size) + 1
     for i in range(page_count):
-        posts_on_page = posts_html[i*page_size:(i+1)*page_size]
-        comments_on_page = comments_html[i*page_size:(i+1)*page_size]
+        posts_on_page = posts_md[i*page_size:(i+1)*page_size]
+        comments_on_page = comments_md[i*page_size:(i+1)*page_size]
         has_next = i < page_count - 1
-        save_html(posts_on_page, comments_on_page, location, html_file, i, has_next, username=html_file.split(".")[0])
-save_html(posts_html, comments_html, location, html_file, None, False, username=html_file.split(".")[0])
+        save_markdown(posts_on_page, comments_on_page, location, f"{html_file.replace('.html', '.md')}", i, has_next, username=html_file.split(".")[0])
+save_markdown(posts_md, comments_md, location, f"{html_file.replace('.html', '.md')}", None, False, username=html_file.split(".")[0])
