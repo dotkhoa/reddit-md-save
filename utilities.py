@@ -6,6 +6,7 @@ import yt_dlp
 import re
 from datetime import datetime
 import markdown2
+import yaml
 
 try:
     from logindata import REDDIT_USERNAME, REDDIT_PASSWORD
@@ -109,14 +110,46 @@ def get_user_comments(client, username):
 
 def get_post_markdown(post):
     dt = datetime.utcfromtimestamp(post.created_utc)
-    md = f"## Post\n\n"
-    md += f"**Title:** {post.title}\n\n"
-    md += f"**Subreddit:** /r/{str(post.subreddit)}\n\n"
-    md += f"**Author:** {f'/u/{post.author.name}' if post.author else '[deleted]'}\n\n"
-    md += f"**Link:** [Reddit](https://reddit.com{post.permalink}) | [Content]({post.url})\n\n"
-    md += f"**ID:** {post.id}\n\n"
-    md += f"**Body:**\n\n{post.selftext}\n\n"
-    md += f"**Date:** {dt.strftime('%d %B, %Y')}\n\n"
+    
+    # Prepare the front matter data in the specified order
+    front_matter = {
+        'title': post.title,
+        'author': post.author.name if post.author else "[deleted]",
+        'subreddit': str(post.subreddit),
+        'upvotes': post.score,
+        'created': dt.strftime("%Y-%m-%d %H:%M:%S"),
+        'published': dt.strftime("%Y-%m-%d %H:%M:%S"),
+        'source': f"https://www.reddit.com{post.permalink}",
+        'id': post.id,
+        'tags': ["reddit"]
+    }
+    
+    # Convert to YAML and handle any parsing errors
+    try:
+        yaml_content = yaml.safe_dump(front_matter, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    except yaml.YAMLError as e:
+        print(f"Error creating YAML for post {post.id}: {e}")
+        # Fallback to a simpler front matter if YAML creation fails
+        yaml_content = f"""---
+title: "{post.title}"
+author: "{front_matter['author']}"
+subreddit: "{front_matter['subreddit']}"
+upvotes: {front_matter['upvotes']}
+created: "{front_matter['created']}"
+published: "{front_matter['published']}"
+source: "{front_matter['source']}"
+id: {post.id}
+tags:
+  - reddit
+---
+"""
+    
+    md = f"---\n{yaml_content}---\n\n"
+    
+    # Add description after front matter
+    if post.selftext:
+        md += f"{post.selftext}\n\n"
+    
     return md
 
 
@@ -215,46 +248,54 @@ def add_media_preview_to_markdown(post_md, media):
 
     extension = media.split(".")[-1]
     location = f"media/{media}"
+    preview = ""
     if extension in IMAGE_EXTENSIONS:
-        return post_md + f"![Preview]({location})\n\n"
-    if extension in VIDEO_EXTENSIONS:
-        return post_md + f"[Video]({location})\n\n"
+        preview = f"![Preview]({location})\n\n"
+    elif extension in VIDEO_EXTENSIONS:
+        preview = f"[Video]({location})\n\n"
+    
+    if preview:
+        parts = post_md.split("---\n", 2)
+        if len(parts) == 3:
+            # Insert preview after front matter and description
+            return f"{parts[0]}---\n{parts[1]}---\n\n{parts[2]}{preview}"
+    
     return post_md
 
 
 def create_post_page_markdown(post, post_md):
-    """Creates the markdown for a post's own page."""
+    """Creates the markdown for a post's own page, including only the top 10 parent comments."""
 
-    md = f"# {post.title}\n\n"
-    md += post_md
-    md += "\n## Comments\n\n"
-    post.comments.replace_more(limit=0)
-    for comment in post.comments:
+    md = post_md  # This now includes the front matter
+    md += "\n## Comments:\n\n"
+    
+    # Sort comments by score and get top 10 parent comments
+    top_comments = sorted(
+        [comment for comment in post.comments if not isinstance(comment, praw.models.MoreComments)],
+        key=lambda x: x.score,
+        reverse=True
+    )[:10]
+    
+    for comment in top_comments:
         md += get_comment_markdown(comment, op=post.author.name if post.author else None)
+    
     return md
 
 
-def get_comment_markdown(comment, children=True, op=None, level=0):
-    """Takes a post object and creates a markdown for it - it will get its children
-    too unless you specify otherwise."""
+def get_comment_markdown(comment, op=None):
+    """Creates markdown for a single comment without its children."""
 
     dt = datetime.utcfromtimestamp(comment.created_utc)
     author = "[deleted]"
     if comment.author:
         if comment.author == op:
-            author = f'**/u/{comment.author.name} (OP)**'
+            author = f'**/u/{comment.author.name}** (OP)'
         else:
-            author = f"/u/{comment.author.name}"
-    md = f"{'#' * (level + 3)} Comment\n\n"
-    md += f"**Author:** {author}\n\n"
-    md += f"**Body:**\n\n{comment.body}\n\n"
-    md += f"**Score:** {comment.score}\n\n"
-    md += f"**Link:** [Comment](https://reddit.com{comment.permalink})\n\n"
-    md += f"**ID:** {comment.id}\n\n"
-    md += f"**Date:** {dt.strftime('%H:%M - %d %B, %Y')}\n\n"
-    if children:
-        for child in comment.replies:
-            md += get_comment_markdown(child, children=False, op=op, level=level+1)
+            author = f'**/u/{comment.author.name}**'
+    
+    md = f"* {author} - {dt.strftime('%H:%M - %d %B, %Y')} - Score: {comment.score}\n\n"
+    md += f"  {comment.body.replace(chr(10), chr(10) + '  ')}\n\n"
+    
     return md
 
 

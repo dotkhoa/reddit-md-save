@@ -85,7 +85,6 @@ if not comments:
 else:
     for comment in tqdm(comments):
         comment_md = get_comment_markdown(comment)
-        media = save_media(post, location)
         comments_md.append(comment_md)
 comments_md += existing_comments_md
 
