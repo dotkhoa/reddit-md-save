@@ -153,9 +153,9 @@ tags:
     return md
 
 
-def save_media(post, location):
+def save_media(post, location, download_videos=False):
     """Takes a post object and tries to download any image/video it might be
-    associated with. If it can, it will return the filename."""
+    associated with. If it can, it will return the filename or URL."""
 
     url = post.url
     stripped_url = url.split("?")[0]
@@ -177,25 +177,24 @@ def save_media(post, location):
         except:
             return
         media_type = response.headers.get("Content-Type", "")
-        if media_type.startswith("image") or media_type.startswith("video"):
+        if media_type.startswith("image") or (media_type.startswith("video") and download_videos):
             with open(os.path.join(location, "media", filename), "wb") as f:
                 f.write(response.content)
-                return filename
+            return filename
+        elif media_type.startswith("video"):
+            return post.url
 
     # Is this a v.redd.it link?
-    if domain == "redd.it":
+    if domain == "redd.it" and download_videos:
         downloader = Downloader(max_q=True, log=False)
         downloader.url = url
-        current = os.getcwd()
         try:
-            name = downloader.download()
-            extension = name.split(".")[-1]
-            filename = f"{readable_name}_{post.id}.{extension}"
-            os.rename(name, os.path.join(location, "media", filename))
-            return filename
+            filename = downloader.download()
+            new_filename = f"{readable_name}_{post.id}.{filename.split('.')[-1]}"
+            os.rename(filename, os.path.join(location, "media", new_filename))
+            return new_filename
         except:
-            os.chdir(current)
-            return None
+            return url
 
     # Is it a gfycat link that redirects? Update the URL if possible
     if domain == "gfycat.com":
@@ -204,55 +203,54 @@ def save_media(post, location):
             match = re.search(r"http([\dA-Za-z\+\:\/\.]+)\.mp4", html.decode())
             if match:
                 url = match.group()
-            else:
-                return None
 
     # Is this an imgur image?
     if domain == "imgur.com" and extension != "gifv":
-        for extension in IMAGE_EXTENSIONS:
-            direct_url = f'https://i.{url[url.find("//") + 2:]}.{extension}'
+        for ext in IMAGE_EXTENSIONS:
+            direct_url = f'https://i.{url[url.find("//") + 2:]}.{ext}'
             direct_url = direct_url.replace("i.imgur.com", "imgur.com")
             direct_url = direct_url.replace("m.imgur.com", "imgur.com")
             try:
                 response = requests.get(direct_url)
             except: continue
             if response.status_code == 200:
-                filename = f"{readable_name}_{post.id}.{extension}"
+                filename = f"{readable_name}_{post.id}.{ext}"
                 with open(os.path.join(location, "media", filename), "wb") as f:
                     f.write(response.content)
-                    return filename
+                return filename
 
-    # Try to use youtube_dl if it's one of the possible domains
-    if domain in PLATFORMS:
+    # Try to use youtube_dl if it's one of the possible domains and we're downloading videos
+    if domain in PLATFORMS and download_videos:
         options = {
             "nocheckcertificate": True, "quiet": True, "no_warnings": True,
             "ignoreerrors": True, "no-progress": True,
-            "outtmpl": os.path.join(
-                location, "media", f"{readable_name}_{post.id}" + ".%(ext)s"
-            )
+            "outtmpl": os.path.join(location, "media", f"{readable_name}_{post.id}.%(ext)s")
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             try:
                 ydl.download([url])
+                for f in os.listdir(os.path.join(location, "media")):
+                    if f.startswith(f"{readable_name}_{post.id}"):
+                        return f
             except:
-                os.chdir(current)
-                return
-        for f in os.listdir(os.path.join(location, "media")):
-            if f.startswith(f"{readable_name}_{post.id}"):
-                return f
+                return url
+
+    return url if not download_videos else None
 
 
-def add_media_preview_to_markdown(post_md, media):
+def add_media_preview_to_markdown(post_md, media, download_videos=False):
     """Takes post markdown and returns a modified version with the preview
     inserted."""
 
-    extension = media.split(".")[-1]
-    location = f"media/{media}"
-    preview = ""
-    if extension in IMAGE_EXTENSIONS:
-        preview = f"![Preview]({location})\n\n"
-    elif extension in VIDEO_EXTENSIONS:
-        preview = f"[Video]({location})\n\n"
+    if media.startswith("http"):
+        preview = f"[Video]({media})\n\n"
+    else:
+        extension = media.split(".")[-1]
+        location = f"media/{media}"
+        if extension in IMAGE_EXTENSIONS:
+            preview = f"![Preview]({location})\n\n"
+        elif extension in VIDEO_EXTENSIONS:
+            preview = f"[Video]({location})\n\n"
     
     if preview:
         parts = post_md.split("---\n", 2)

@@ -17,10 +17,13 @@ if os.getenv("DOCKER", "0") != "1":
     parser.add_argument("location", type=str, nargs=1, help="The path to save to.")
 # Optional page size argument
 parser.add_argument("--page-size", type=int, nargs=1, default=[0], help="The number of posts to save per page.")
+# Add new argument for video download toggle
+parser.add_argument("--download-videos", action="store_true", help="Download videos instead of just linking to them.")
 args = parser.parse_args()
 mode = args.mode[0]
 page_size = args.page_size[0]
 location = "./archive/" if os.getenv("DOCKER", "0") == "1" else args.location[0]
+download_videos = args.download_videos
 
 # Create the location directory if it doesn't exist
 if not os.path.exists(location):
@@ -68,9 +71,9 @@ if not posts:
 else:
     for post in tqdm(posts):
         post_md = get_post_markdown(post)
-        media = save_media(post, location)
+        media = save_media(post, location, download_videos)
         if media:
-            post_md = add_media_preview_to_markdown(post_md, media)
+            post_md = add_media_preview_to_markdown(post_md, media, download_videos)
         posts_md.append(post_md)
         page_md = create_post_page_markdown(post, post_md)
         with open(os.path.join(location, "posts", f"{post.id}.md"), "w", encoding="utf-8") as f:
