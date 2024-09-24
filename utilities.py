@@ -5,6 +5,8 @@ from redvid import Downloader
 import yt_dlp
 import re
 from datetime import datetime
+import markdown2
+import yaml
 
 try:
     from logindata import REDDIT_USERNAME, REDDIT_PASSWORD
@@ -34,37 +36,33 @@ def make_client():
     )
 
 
-def get_previous(location, html_file):
-    html_files = [f for f in os.listdir(location) if f.endswith(".html")]
-    pattern = html_file.replace(".html", r"\.(\d+)?\.html")
-    matches = [re.match(pattern, f) for f in html_files]
+def get_previous(location, md_file):
+    md_files = [f for f in os.listdir(location) if f.endswith(".md")]
+    pattern = md_file.replace(".md", r"\.(\d+)?\.md")
+    matches = [re.match(pattern, f) for f in md_files]
     matches = [m[0] for m in matches if m]
     matches.sort(key=lambda x: int(x.split(".")[1]))
     existing_ids = []
-    existing_posts_html = []
-    existing_comments_html = []
-    if html_file in html_files: matches.append(html_file)
+    existing_posts_md = []
+    existing_comments_md = []
+    if md_file in md_files: matches.append(md_file)
     for match in matches:
         with open(os.path.join(location, match), encoding="utf-8") as f:
-            current_html = f.read()
-            for id in re.findall(r'id="(.+?)"', current_html):
+            current_md = f.read()
+            for id in re.findall(r'\n\*\*ID:\*\* (.+?)\n', current_md):
                 if id not in existing_ids:
                     existing_ids.append(id)
             posts = re.findall(
-                r'(<div class="post"[\S\n\t\v ]+?<!--postend--><\/div>)',
-                current_html
+                r'(## Post[\S\n\t\v ]+?(?=\n## Post|\Z))',
+                current_md
             )
             comments = re.findall(
-                r'(<div class="comment"[\S\n\t\v ]+?<!--commentend--><\/div>)',
-                current_html
+                r'(### Comment[\S\n\t\v ]+?(?=\n### Comment|\Z))',
+                current_md
             )
-            for post in posts:
-                if post not in existing_posts_html:
-                    existing_posts_html.append(post)
-            for comment in comments:
-                if comment not in existing_comments_html:
-                    existing_comments_html.append(comment)
-    return existing_ids, existing_posts_html, existing_comments_html
+            existing_posts_md.extend(posts)
+            existing_comments_md.extend(comments)
+    return existing_ids, existing_posts_md, existing_comments_md
 
 
 def get_saved_posts(client):
@@ -110,31 +108,65 @@ def get_user_comments(client, username):
     ]
 
 
-def get_post_html(post):
-    """Takes a post object and creates a HTML for it - but not including the
-    preview HTML."""
+def sanitize_filename(title):
+    """Sanitize the title to be used as a filename."""
+    # Remove invalid filename characters and limit length
+    sanitized = re.sub(r'[\\/*?:"<>|]', "", title)
+    return sanitized[:200]  # Limit filename length to 200 characters
 
-    with open(os.path.join("html", "post-div.html"), encoding="utf-8") as f:
-        html = f.read()
+
+def get_post_markdown(post, use_id=False):
     dt = datetime.utcfromtimestamp(post.created_utc)
-    html = html.replace("<!--title-->", post.title)
-    html = html.replace("<!--subreddit-->", f"/r/{str(post.subreddit)}")
-    html = html.replace("<!--user-->", f"/u/{post.author.name}" if post.author else "[deleted]")
-    html = html.replace("<!--link-->", f"posts/{post.id}.html")
-    html = html.replace("<!--reddit-link-->", f"https://reddit.com{post.permalink}")
-    html = html.replace("<!--content-link-->", post.url)
-    html = html.replace("<!--id-->", post.id)
-    html = html.replace("<!--body-->", (post.selftext_html or "").replace(
-        '<a href="/r/', '<a href="https://reddit.com/r/'
-    ))
-    html = html.replace("<!--timestamp-->", str(dt))
-    html = html.replace("<!--date-->", dt.strftime("%d %B, %Y"))
-    return html
+    
+    # Prepare the front matter data in the specified order
+    front_matter = {
+        'author': post.author.name if post.author else "[deleted]",
+        'subreddit': str(post.subreddit),
+        'upvotes': post.score,
+        'created': dt.strftime("%Y-%m-%d %H:%M:%S"),
+        'published': dt.strftime("%Y-%m-%d %H:%M:%S"),
+        'source': f"https://www.reddit.com{post.permalink}",
+        'id': post.id,
+        'tags': ["reddit"]
+    }
+    
+    # Add title to front matter only if using ID as filename, and make it the first item
+    if use_id:
+        front_matter = {'title': post.title, **front_matter}
+    
+    # Convert to YAML and handle any parsing errors
+    try:
+        yaml_content = yaml.safe_dump(front_matter, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    except yaml.YAMLError as e:
+        print(f"Error creating YAML for post {post.id}: {e}")
+        # Fallback to a simpler front matter if YAML creation fails
+        yaml_content = "---\n"
+        if use_id:
+            yaml_content += f'title: "{post.title}"\n'
+        yaml_content += f"""author: "{front_matter['author']}"
+subreddit: "{front_matter['subreddit']}"
+upvotes: {front_matter['upvotes']}
+created: "{front_matter['created']}"
+published: "{front_matter['published']}"
+source: "{front_matter['source']}"
+id: {post.id}
+tags:
+  - reddit
+---
+"""
+    
+    md = f"---\n{yaml_content}---\n\n"
+    
+    # Add description after front matter
+    if post.selftext:
+        md += f"{post.selftext}\n\n"
+    
+    return md
 
 
-def save_media(post, location):
+def save_media(post, location, download_videos=False):
     """Takes a post object and tries to download any image/video it might be
-    associated with. If it can, it will return the filename."""
+    associated with. If it can, it will return the filename or URL."""
 
     url = post.url
     stripped_url = url.split("?")[0]
@@ -156,25 +188,24 @@ def save_media(post, location):
         except:
             return
         media_type = response.headers.get("Content-Type", "")
-        if media_type.startswith("image") or media_type.startswith("video"):
-            with open(os.path.join(location, "media", filename), "wb") as f:
+        if media_type.startswith("image") or (media_type.startswith("video") and download_videos):
+            with open(os.path.join(location, "Attachments", filename), "wb") as f:
                 f.write(response.content)
-                return filename
+            return filename
+        elif media_type.startswith("video"):
+            return post.url
 
     # Is this a v.redd.it link?
-    if domain == "redd.it":
+    if domain == "redd.it" and download_videos:
         downloader = Downloader(max_q=True, log=False)
         downloader.url = url
-        current = os.getcwd()
         try:
-            name = downloader.download()
-            extension = name.split(".")[-1]
-            filename = f"{readable_name}_{post.id}.{extension}"
-            os.rename(name, os.path.join(location, "media", filename))
-            return filename
+            filename = downloader.download()
+            new_filename = f"{readable_name}_{post.id}.{filename.split('.')[-1]}"
+            os.rename(filename, os.path.join(location, "Attachments", new_filename))
+            return new_filename
         except:
-            os.chdir(current)
-            return None
+            return url
 
     # Is it a gfycat link that redirects? Update the URL if possible
     if domain == "gfycat.com":
@@ -183,140 +214,112 @@ def save_media(post, location):
             match = re.search(r"http([\dA-Za-z\+\:\/\.]+)\.mp4", html.decode())
             if match:
                 url = match.group()
-            else:
-                return None
 
     # Is this an imgur image?
     if domain == "imgur.com" and extension != "gifv":
-        for extension in IMAGE_EXTENSIONS:
-            direct_url = f'https://i.{url[url.find("//") + 2:]}.{extension}'
+        for ext in IMAGE_EXTENSIONS:
+            direct_url = f'https://i.{url[url.find("//") + 2:]}.{ext}'
             direct_url = direct_url.replace("i.imgur.com", "imgur.com")
             direct_url = direct_url.replace("m.imgur.com", "imgur.com")
             try:
                 response = requests.get(direct_url)
             except: continue
             if response.status_code == 200:
-                filename = f"{readable_name}_{post.id}.{extension}"
-                with open(os.path.join(location, "media", filename), "wb") as f:
+                filename = f"{readable_name}_{post.id}.{ext}"
+                with open(os.path.join(location, "Attachments", filename), "wb") as f:
                     f.write(response.content)
-                    return filename
+                return filename
 
-    # Try to use youtube_dl if it's one of the possible domains
-    if domain in PLATFORMS:
+    # Try to use youtube_dl if it's one of the possible domains and we're downloading videos
+    if domain in PLATFORMS and download_videos:
         options = {
             "nocheckcertificate": True, "quiet": True, "no_warnings": True,
             "ignoreerrors": True, "no-progress": True,
-            "outtmpl": os.path.join(
-                location, "media", f"{readable_name}_{post.id}" + ".%(ext)s"
-            )
+            "outtmpl": os.path.join(location, "Attachments", f"{readable_name}_{post.id}.%(ext)s")
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             try:
                 ydl.download([url])
+                for f in os.listdir(os.path.join(location, "Attachments")):
+                    if f.startswith(f"{readable_name}_{post.id}"):
+                        return f
             except:
-                os.chdir(current)
-                return
-        for f in os.listdir(os.path.join(location, "media")):
-            if f.startswith(f"{readable_name}_{post.id}"):
-                return f
+                return url
+
+    return url if not download_videos else None
 
 
-def add_media_preview_to_html(post_html, media):
-    """Takes post HTML and returns a modified version with the preview
+def add_media_preview_to_markdown(post_md, media, download_videos=False):
+    """Takes post markdown and returns a modified version with the preview
     inserted."""
 
-    extension = media.split(".")[-1]
-    location = "/".join(["media", media])
-    if extension in IMAGE_EXTENSIONS:
-        return post_html.replace(
-            "<!--preview-->",
-            f'<img src="{location}">'
-        )
-    if extension in VIDEO_EXTENSIONS:
-        return post_html.replace(
-            "<!--preview-->",
-            f'<video controls><source src="{location}"></video>'
-        )
-    return post_html
+    if media.startswith("http"):
+        preview = f"[Video]({media})\n\n"
+    else:
+        extension = media.split(".")[-1]
+        location = f"Attachments/{media}"
+        if extension in IMAGE_EXTENSIONS:
+            preview = f"![Preview]({location})\n\n"
+        elif extension in VIDEO_EXTENSIONS:
+            preview = f"[Video]({location})\n\n"
+    
+    if preview:
+        parts = post_md.split("---\n", 2)
+        if len(parts) == 3:
+            # Insert preview after front matter and description
+            return f"{parts[0]}---\n{parts[1]}---\n\n{parts[2]}{preview}"
+    
+    return post_md
 
 
-def create_post_page_html(post, post_html):
-    """Creates the HTML for a post's own page."""
+def create_post_page_markdown(post, post_md):
+    """Creates the markdown for a post's own page, including only the top 10 parent comments."""
 
-    with open(os.path.join("html", "post.html"), encoding="utf-8") as f:
-        html = f.read()
-    html = html.replace("<!--title-->", post.title)
-    html = html.replace("<!--post-->", post_html.replace("h2>", "h1>").replace(
-        '<img src="media/', '<img src="../media/'
-    ).replace(
-        '<source src="media/', '<source src="../media/'
-    ))
-    html = re.sub(r'<a href="posts(.+?)</a>', "", html)
-    with open(os.path.join("html", "style.css"), encoding="utf-8") as f:
-        html = html.replace("<style></style>", f"<style>\n{f.read()}\n</style>")
-    with open(os.path.join("html", "main.js"), encoding="utf-8") as f:
-        html = html.replace("<script></script>", f"<script>\n{f.read()}\n</script>")
-    comments_html = []
-    post.comments.replace_more(limit=0)
-    for comment in post.comments:
-        comments_html.append(get_comment_html(
-            comment, op=post.author.name if post.author else None
-        ))
-    html = html.replace("<!--comments-->", "\n".join(comments_html))
-    return html
+    md = post_md  # This now includes the front matter
+    md += "\n## Comments:\n\n"
+    
+    # Sort comments by score and get top 10 parent comments
+    top_comments = sorted(
+        [comment for comment in post.comments if not isinstance(comment, praw.models.MoreComments)],
+        key=lambda x: x.score,
+        reverse=True
+    )[:10]
+    
+    for comment in top_comments:
+        md += get_comment_markdown(comment, op=post.author.name if post.author else None)
+    
+    return md
 
 
-def get_comment_html(comment, children=True, op=None):
-    """Takes a post object and creates a HTML for it - it will get its children
-    too unless you specify otherwise."""
+def get_comment_markdown(comment, op=None):
+    """Creates markdown for a single comment without its children."""
 
-    with open(os.path.join("html", "comment-div.html"), encoding="utf-8") as f:
-        html = f.read()
     dt = datetime.utcfromtimestamp(comment.created_utc)
     author = "[deleted]"
     if comment.author:
         if comment.author == op:
-            author = f'<span class="op">/u/{comment.author.name}</span>'
+            author = f'**/u/{comment.author.name}** (OP)'
         else:
-            author = f"/u/{comment.author.name}"
-    html = html.replace("<!--user-->", author)
-    html = html.replace("<!--body-->", (comment.body_html or "").replace(
-        '<a href="/r/', '<a href="https://reddit.com/r/'
-    ))
-    html = html.replace("<!--score-->", str(comment.score))
-    html = html.replace("<!--link-->", f"https://reddit.com{comment.permalink}")
-    html = html.replace("<!--timestamp-->", str(dt))
-    html = html.replace("<!--id-->", comment.id)
-    html = html.replace("<!--date-->", dt.strftime("%H:%M - %d %B, %Y"))
-    if children:
-        children_html = []
-        for child in comment.replies:
-            children_html.append(get_comment_html(child, children=False, op=op))
-        html = html.replace("<!--children-->", "\n".join(children_html))
-    return html
+            author = f'**/u/{comment.author.name}**'
+    
+    md = f"* {author} - {dt.strftime('%H:%M - %d %B, %Y')} - Score: {comment.score}\n\n"
+    md += f"  {comment.body.replace(chr(10), chr(10) + '  ')}\n\n"
+    
+    return md
 
 
-def save_html(posts, comments, location, html_file, page, has_next, username=None):
-    if username:
-        with open(os.path.join("html", "username.html"), encoding="utf-8") as f:
-            html = f.read().replace("[username]", username)
-    else:
-        with open(os.path.join("html", html_file), encoding="utf-8") as f:
-            html = f.read()
-    with open(os.path.join("html", "style.css"), encoding="utf-8") as f:
-        html = html.replace("<style></style>", f"<style>\n{f.read()}\n</style>")
-    with open(os.path.join("html", "main.js"), encoding="utf-8") as f:
-        html = html.replace("<script></script>", f"<script>\n{f.read()}\n</script>")
-    if page == 0 or page is None:
-        html = html.replace("Previous</a>", "</a>")
-    else:
-        html = html.replace(".p.html", f".{page-1}.html")
-    if not has_next or page is None:
-        html = html.replace("Next</a>", "</a>")
-    else:
-        html = html.replace(".n.html", f".{page+1}.html")
-    html = html.replace("<!--posts-->", "\n".join(posts))
-    html = html.replace("<!--comments-->", "\n".join(comments))
-    file_name = html_file if page is None else html_file.replace(".html", f".{page}.html")
+def save_markdown(posts, comments, location, md_file, page, has_next, username=None):
+    md = f"# {'Saved' if 'saved' in md_file else 'Upvoted' if 'upvoted' in md_file else username + '\'s'} Posts and Comments\n\n"
+    if page is not None:
+        if page > 0:
+            md += f"[Previous]({md_file.replace('.md', f'.{page-1}.md')}) | "
+        if has_next:
+            md += f"[Next]({md_file.replace('.md', f'.{page+1}.md')})"
+        md += "\n\n"
+    md += "## Posts\n\n"
+    md += "\n".join(posts)
+    md += "\n\n## Comments\n\n"
+    md += "\n".join(comments)
+    file_name = md_file if page is None else md_file.replace(".md", f".{page}.md")
     with open(os.path.join(location, file_name), "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(md)

@@ -4,3 +4,5 @@ youtube_dl
 yt-dlp
 tqdm
 redvid
+markdown2
+pyyaml
