@@ -178,7 +178,7 @@ def save_media(post, location, download_videos=False):
             return
         media_type = response.headers.get("Content-Type", "")
         if media_type.startswith("image") or (media_type.startswith("video") and download_videos):
-            with open(os.path.join(location, "media", filename), "wb") as f:
+            with open(os.path.join(location, "Attachments", filename), "wb") as f:
                 f.write(response.content)
             return filename
         elif media_type.startswith("video"):
@@ -191,7 +191,7 @@ def save_media(post, location, download_videos=False):
         try:
             filename = downloader.download()
             new_filename = f"{readable_name}_{post.id}.{filename.split('.')[-1]}"
-            os.rename(filename, os.path.join(location, "media", new_filename))
+            os.rename(filename, os.path.join(location, "Attachments", new_filename))
             return new_filename
         except:
             return url
@@ -215,7 +215,7 @@ def save_media(post, location, download_videos=False):
             except: continue
             if response.status_code == 200:
                 filename = f"{readable_name}_{post.id}.{ext}"
-                with open(os.path.join(location, "media", filename), "wb") as f:
+                with open(os.path.join(location, "Attachments", filename), "wb") as f:
                     f.write(response.content)
                 return filename
 
@@ -224,12 +224,12 @@ def save_media(post, location, download_videos=False):
         options = {
             "nocheckcertificate": True, "quiet": True, "no_warnings": True,
             "ignoreerrors": True, "no-progress": True,
-            "outtmpl": os.path.join(location, "media", f"{readable_name}_{post.id}.%(ext)s")
+            "outtmpl": os.path.join(location, "Attachments", f"{readable_name}_{post.id}.%(ext)s")
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             try:
                 ydl.download([url])
-                for f in os.listdir(os.path.join(location, "media")):
+                for f in os.listdir(os.path.join(location, "Attachments")):
                     if f.startswith(f"{readable_name}_{post.id}"):
                         return f
             except:
@@ -246,7 +246,7 @@ def add_media_preview_to_markdown(post_md, media, download_videos=False):
         preview = f"[Video]({media})\n\n"
     else:
         extension = media.split(".")[-1]
-        location = f"media/{media}"
+        location = f"Attachments/{media}"
         if extension in IMAGE_EXTENSIONS:
             preview = f"![Preview]({location})\n\n"
         elif extension in VIDEO_EXTENSIONS:

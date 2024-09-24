@@ -52,10 +52,10 @@ elif mode.startswith("user:"):
     get_comments = lambda client: get_user_comments(client, username)
 
 # Make directory for media and posts
-if not os.path.exists(os.path.join(location, "media")):
-    os.mkdir(os.path.join(location, "media"))
-if not os.path.exists(os.path.join(location, "posts")):
-    os.mkdir(os.path.join(location, "posts"))
+if not os.path.exists(os.path.join(location, "Attachments")):
+    os.mkdir(os.path.join(location, "Attachments"))
+if not os.path.exists(os.path.join(location, "Posts")):
+    os.mkdir(os.path.join(location, "Posts"))
 
 # Get files to search through
 print("Getting previously saved posts and comments...")
@@ -76,7 +76,7 @@ else:
             post_md = add_media_preview_to_markdown(post_md, media, download_videos)
         posts_md.append(post_md)
         page_md = create_post_page_markdown(post, post_md)
-        with open(os.path.join(location, "posts", f"{post.id}.md"), "w", encoding="utf-8") as f:
+        with open(os.path.join(location, "Posts", f"{post.id}.md"), "w", encoding="utf-8") as f:
             f.write(page_md)
 posts_md += existing_posts_md
 
