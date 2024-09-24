@@ -130,9 +130,9 @@ def get_post_markdown(post, use_id=False):
         'tags': ["reddit"]
     }
     
-    # Add title to front matter only if using ID as filename
+    # Add title to front matter only if using ID as filename, and make it the first item
     if use_id:
-        front_matter['title'] = post.title
+        front_matter = {'title': post.title, **front_matter}
     
     # Convert to YAML and handle any parsing errors
     try:
@@ -140,8 +140,10 @@ def get_post_markdown(post, use_id=False):
     except yaml.YAMLError as e:
         print(f"Error creating YAML for post {post.id}: {e}")
         # Fallback to a simpler front matter if YAML creation fails
-        yaml_content = f"""---
-author: "{front_matter['author']}"
+        yaml_content = "---\n"
+        if use_id:
+            yaml_content += f'title: "{post.title}"\n'
+        yaml_content += f"""author: "{front_matter['author']}"
 subreddit: "{front_matter['subreddit']}"
 upvotes: {front_matter['upvotes']}
 created: "{front_matter['created']}"
@@ -150,10 +152,8 @@ source: "{front_matter['source']}"
 id: {post.id}
 tags:
   - reddit
+---
 """
-        if use_id:
-            yaml_content += f'title: "{post.title}"\n'
-        yaml_content += "---\n"
     
     md = f"---\n{yaml_content}---\n\n"
     
