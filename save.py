@@ -11,19 +11,14 @@ def validate_mode(mode):
     if mode not in ["saved", "upvoted"] and not mode.startswith("user:"):
         raise argparse.ArgumentTypeError(f"Invalid mode: {mode}")
     return mode
-parser = argparse.ArgumentParser(description="Save reddit posts to file.")
-parser.add_argument("mode", type=validate_mode, nargs=1, help="The file to convert.")
+parser = argparse.ArgumentParser(description="Save reddit posts to markdown file.")
+parser.add_argument("mode", type=validate_mode, nargs=1, help="The mode to use: saved, upvoted, or user:<username>")
 if os.getenv("DOCKER", "0") != "1":
     parser.add_argument("location", type=str, nargs=1, help="The path to save to.")
-# Optional page size argument
-parser.add_argument("--page-size", type=int, nargs=1, default=[0], help="The number of posts to save per page.")
-# Add new argument for video download toggle
 parser.add_argument("--download-videos", action="store_true", help="Download videos instead of just linking to them.")
-# Add new argument for using post ID as filename
 parser.add_argument("--use-id", action="store_true", help="Use post ID as filename instead of title.")
 args = parser.parse_args()
 mode = args.mode[0]
-page_size = args.page_size[0]
 location = "./archive/" if os.getenv("DOCKER", "0") == "1" else args.location[0]
 download_videos = args.download_videos
 use_id = args.use_id
