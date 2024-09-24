@@ -1,8 +1,8 @@
 version: "3.2"    
 services:
-    reddit-save:
+    reddit-md-save:
         build: .
-        image: reddit-save:latest
+        image: reddit-md-save:latest
         environment:
           REDDIT_USERNAME:
           REDDIT_PASSWORD:
@@ -10,3 +10,4 @@ services:
           REDDIT_SECRET:
         volumes:
           - "./archive:/opt/app/archive"
+        command: ["saved", "--download-videos", "--use-id"]
