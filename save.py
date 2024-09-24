@@ -22,9 +22,13 @@ mode = args.mode[0]
 page_size = args.page_size[0]
 location = "./archive/" if os.getenv("DOCKER", "0") == "1" else args.location[0]
 
-# Is location specified a directory?
-if not os.path.isdir(location):
-    print(location, "is not a directory")
+# Create the location directory if it doesn't exist
+if not os.path.exists(location):
+    os.makedirs(location)
+    print(f"Created directory: {location}")
+elif not os.path.isdir(location):
+    print(f"Error: {location} exists but is not a directory")
+    exit(1)
 
 # Make a client object
 client = make_client()
