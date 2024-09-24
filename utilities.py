@@ -108,12 +108,18 @@ def get_user_comments(client, username):
     ]
 
 
-def get_post_markdown(post):
+def sanitize_filename(title):
+    """Sanitize the title to be used as a filename."""
+    # Remove invalid filename characters and limit length
+    sanitized = re.sub(r'[\\/*?:"<>|]', "", title)
+    return sanitized[:200]  # Limit filename length to 200 characters
+
+
+def get_post_markdown(post, use_id=False):
     dt = datetime.utcfromtimestamp(post.created_utc)
     
     # Prepare the front matter data in the specified order
     front_matter = {
-        'title': post.title,
         'author': post.author.name if post.author else "[deleted]",
         'subreddit': str(post.subreddit),
         'upvotes': post.score,
@@ -124,6 +130,10 @@ def get_post_markdown(post):
         'tags': ["reddit"]
     }
     
+    # Add title to front matter only if using ID as filename
+    if use_id:
+        front_matter['title'] = post.title
+    
     # Convert to YAML and handle any parsing errors
     try:
         yaml_content = yaml.safe_dump(front_matter, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -131,7 +141,6 @@ def get_post_markdown(post):
         print(f"Error creating YAML for post {post.id}: {e}")
         # Fallback to a simpler front matter if YAML creation fails
         yaml_content = f"""---
-title: "{post.title}"
 author: "{front_matter['author']}"
 subreddit: "{front_matter['subreddit']}"
 upvotes: {front_matter['upvotes']}
@@ -141,8 +150,10 @@ source: "{front_matter['source']}"
 id: {post.id}
 tags:
   - reddit
----
 """
+        if use_id:
+            yaml_content += f'title: "{post.title}"\n'
+        yaml_content += "---\n"
     
     md = f"---\n{yaml_content}---\n\n"
     
